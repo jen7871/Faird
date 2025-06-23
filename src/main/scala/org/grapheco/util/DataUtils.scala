@@ -14,6 +14,7 @@ import org.apache.spark.sql.errors.ExecutionErrors
 import org.apache.spark.sql.types._
 
 import java.io.{File, FileInputStream}
+import java.nio.file.{Files, Paths}
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicInteger
 import scala.io.Source
@@ -61,6 +62,21 @@ object DataUtils {
       dir.listFiles().filter(_.isFile).toSeq
     } else {
       Seq.empty
+    }
+  }
+
+
+  def iterateFiles(directoryPath: String): Iterator[File] = {
+    val dir = Paths.get(directoryPath)
+    if (Files.isDirectory(dir)) {
+      val stream = Files.newDirectoryStream(dir)  // 惰性流
+      import scala.collection.JavaConverters._
+      stream.asScala
+        .iterator
+        .filter(Files.isRegularFile(_))
+        .map(_.toFile)
+    } else {
+      Iterator.empty
     }
   }
 

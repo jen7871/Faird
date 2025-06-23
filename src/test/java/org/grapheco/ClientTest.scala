@@ -10,6 +10,7 @@ import org.grapheco.server.{FairdServer, FlightProducerImpl}
 import org.junit.jupiter.api.{AfterAll, BeforeAll, Test}
 
 import java.nio.charset.StandardCharsets
+//import scala.sys.process.processInternal.InputStream
 
 /**
  * @Author renhao
@@ -49,20 +50,56 @@ class ClientTest {
   }
 
   @Test
-  def dfApiTest(): Unit = {
+  def dfBinarySchemaTest(): Unit = {
     import org.apache.spark.sql.types._
-
-    val schema = new StructType()
-      .add("id", IntegerType, nullable = false)
-      .add("name", StringType)
-      .add("bin", BinaryType)
 
     val dc = FairdClient.connect("dacp://0.0.0.0:33333")
     val df = dc.open("dacp://10.0.0.1/bindata")
     var totalBytes: Long = 0L
     var realBytes: Long = 0L
     var count: Int = 0
-    val batchSize = 2
+    val batchSize = 1
+    val startTime = System.currentTimeMillis()
+    var start = System.currentTimeMillis()
+    println("SchemaURI:" + df.getSchemaURI)
+    println("---------------------------------------------------------------------------")
+    println("MetaData:" + df.getMetaData)
+    println("---------------------------------------------------------------------------")
+    println("Schema:" + df.getSchema)
+    println("---------------------------------------------------------------------------")
+//    df.limit(10).map(x=>Row("-------"+x.get(0).toString, "#########"+x.get(1).toString)).foreach(row => {
+//      println(row)
+//    })
+    df.limit(10)
+      .foreach(println)
+//    df.limit(20).foreach(row => {
+//      //      计算当前 row 占用的字节数（UTF-8 编码）
+//      //      val index = row.get(0).asInstanceOf[Int]
+//      val name = row.get(0).asInstanceOf[String]
+//      val blob = row.get(6).asInstanceOf[Blob]
+//      val bytesLen = blob.size
+//      println(row)
+//    })
+//    df.foreach(row => {
+//      //      计算当前 row 占用的字节数（UTF-8 编码）
+//      //      val index = row.get(0).asInstanceOf[Int]
+//      val name = row.get(0).asInstanceOf[String]
+//      val blob = row.get(6).asInstanceOf[Blob]
+//      val bytesLen = blob.size
+//      println(row)
+//  })
+  }
+
+  @Test
+  def dfApiTest(): Unit = {
+    import org.apache.spark.sql.types._
+
+    val dc = FairdClient.connect("dacp://0.0.0.0:33333")
+    val df = dc.open("/bindata")
+    var totalBytes: Long = 0L
+    var realBytes: Long = 0L
+    var count: Int = 0
+    val batchSize = 1
     val startTime = System.currentTimeMillis()
     var start = System.currentTimeMillis()
     println("SchemaURI:"+df.getSchemaURI)
@@ -71,14 +108,29 @@ class ClientTest {
     println("---------------------------------------------------------------------------")
     println("Schema:"+df.getSchema)
     println("---------------------------------------------------------------------------")
+    df.limit(20).foreach(row => {
+      println(row)
+    })
+//    df.limit(10).map(x=>Row(""+x.get(0).toString, ","+x.get(1).toString,
+//      ","+x.get(2).toString, ","+x.get(3).toString,
+//      ","+x.get(4).toString, ","+x.get(5).toString, ","+x.get(6).asInstanceOf[Blob].toString),
+//
+//    ).foreach(println)
+
+
     df.foreach(row => {
       //      计算当前 row 占用的字节数（UTF-8 编码）
       //      val index = row.get(0).asInstanceOf[Int]
       val name = row.get(0).asInstanceOf[String]
       val blob = row.get(6).asInstanceOf[Blob]
+
+
+
       //      val bytesLen = blob.length
       val bytesLen = blob.size
-      println(f"Received: ${blob.chunkCount} chunks, name:$name")
+//      val in:InputStream = blob.getStream
+//      in.close()
+//      println(f"Received: ${blob.chunkCount} chunks, name:$name")
       totalBytes += bytesLen
       realBytes += bytesLen
 
@@ -125,7 +177,7 @@ class ClientTest {
       val blob = row.get(1).asInstanceOf[Blob]
       //      val bytesLen = blob.length
       val bytesLen = blob.size
-      println(f"Received: ${blob.chunkCount} chunks, name:$name")
+//      println(f"Received: ${blob.chunkCount} chunks, name:$name")
       totalBytes += bytesLen
       realBytes += bytesLen
 

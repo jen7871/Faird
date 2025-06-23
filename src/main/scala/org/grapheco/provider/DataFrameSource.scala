@@ -110,11 +110,11 @@ class DynamicDataFrameSourceFactory(provider: DataFrameProvider) extends DataFra
     val propertiesMap: Map[String, String] = remoteDataFrame.getPropertiesMap
 
     val dataFormat: String = propertiesMap("dataFormat").asInstanceOf[String]
-//    log.info(s"propertiesMap is null? ${dataFormat}")
+    //    log.info(s"propertiesMap is null? ${dataFormat}")
     dataFormat match {
-      case "csv" => new CSVSource(remoteDataFrame,provider)
-      case "structured" => new StructuredSource(remoteDataFrame,provider)
-      case _ => new DirectorySource(remoteDataFrame,provider)
+      case "csv" => new CSVSource(remoteDataFrame, provider)
+      case "structured" => new StructuredSource(remoteDataFrame, provider)
+      case _ => new DirectorySource(remoteDataFrame, provider)
       //      case other => throw new IllegalArgumentException(s"Unsupported format: $other")
     }
   }
@@ -128,7 +128,7 @@ class CSVSource(remoteDataFrame: RemoteDataFrame, provider: DataFrameProvider) e
     val dataFrameName = remoteDataFrame.source.dataFrames
     log.info(s"create dataFrame from $dataSet/$dataFrameName")
 
-    val delimiter: String = remoteDataFrame.getPropertiesMap.get("http://example.org/dataset/"+"delimiter").map(_.toString).getOrElse(",")
+    val delimiter: String = remoteDataFrame.getPropertiesMap.get("http://example.org/dataset/" + "delimiter").map(_.toString).getOrElse(",")
     val stream: Iterator[Row] = DataUtils.getFileLines(s"$dataSet/$dataFrameName").map(line => {
       Row(line.split(delimiter): _*)
     })
@@ -173,27 +173,42 @@ class DirectorySource(remoteDataFrame: RemoteDataFrame, provider: DataFrameProvi
     val path = provider.getPath(remoteDataFrame)
     val format = remoteDataFrame.getPropertiesMap("dataFormat")
     val fileType = remoteDataFrame.getPropertiesMap("dataType")
-    val size =  remoteDataFrame.getPropertiesMap("size")
-    val lastModified =  remoteDataFrame.getPropertiesMap("lastModified")
+    val size = remoteDataFrame.getPropertiesMap("size")
+    val lastModified = remoteDataFrame.getPropertiesMap("lastModified")
     log.info(s"create dataFrame from $path")
     val chunkSize: Int = 5 * 1024 * 1024
-    val stream: Iterator[Row] = DataUtils.listFiles(s"$path").toIterator.zipWithIndex.map {
-      case (file, index) =>
-        (index, file.getName, DataUtils.readFileInChunks(file, chunkSize))
-    }.flatMap { case (index, filename, chunks) =>
+    val fileCache = mutable.LinkedHashMap[String, File]()
+    val rows: Iterator[Row] = DataUtils.iterateFiles(s"$path").map { file =>
+      val key = file.getName // 或用 file.getName.hashCode 等
+      val row = Row(key, path, format, fileType, size, lastModified, file)
+//      fileCache += (key -> file)
+      row// 缓存 File
+
+    }
+    val result = applyOperations(rows, remoteDataFrame.ops)
+    val stream: Iterator[Row] = result.map {
+      fileRow => {
+        try{
+          val file = fileRow.toSeq.collectFirst {
+            case file: File => file
+          }.get
+          (file.getName, DataUtils.readFileInChunks(file, chunkSize))
+        } catch {
+        case e: Exception => throw new Exception("Can't get file cause of transformation.")
+        }
+
+      }
+    }.flatMap { case (filename, chunks) =>
       chunks.map(chunk => (filename, path, format, fileType, size, lastModified, chunk))
     }.map(Row.fromTuple(_))
+    DataFrameSourceImpl(stream.grouped(batchSize))
+  }
 
+  private def applyOperations(stream: Iterator[Row], ops: List[DFOperation]): Iterator[Row] = {
+    ops.foldLeft(stream) { (acc, op) => op.transform(acc) }
+  }
 
-  val result = applyOperations(stream, remoteDataFrame.ops)
-  DataFrameSourceImpl(result.grouped(batchSize))
-}
-
-private def applyOperations(stream: Iterator[Row], ops: List[DFOperation]): Iterator[Row] = {
-  ops.foldLeft(stream) { (acc, op) => op.transform(acc) }
-}
-
-override def getArrowRecordBatch(root: VectorSchemaRoot): Iterator[ArrowRecordBatch] = _dataFrameSourceImpl.getArrowRecordBatch(root)
+  override def getArrowRecordBatch(root: VectorSchemaRoot): Iterator[ArrowRecordBatch] = _dataFrameSourceImpl.getArrowRecordBatch(root)
 }
 
 

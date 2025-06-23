@@ -313,5 +313,8 @@ class Blob( val chunkIterator:Iterator[Array[Byte]]) extends Serializable {
   /** 获取分块迭代器 */
 //  def chunkIterator: Iterator[Array[Byte]] = chunkIterator
 
-  override def toString: String = s"Blob()"
+  override def toString: String = {
+    loadLazily()
+    s"Blob()"
+  }
 }
