@@ -1,6 +1,8 @@
 package link.rdcn.util
 
 import link.rdcn.Logging
+import scala.collection.mutable
+
 import link.rdcn.struct.ValueType._
 import link.rdcn.struct.{Row, StructType}
 import org.apache.arrow.vector.ipc.message.ArrowRecordBatch
@@ -22,6 +24,42 @@ import scala.io.Source
  * @Modified By:
  */
 object DataUtils extends Logging{
+  private val resourceManager = new ResourceManager
+
+  class ResourceManager {
+    private val resources = mutable.Map[String, Source]()
+
+    def register(source: Source, filePath: String): Unit = {
+      resources.synchronized {
+        resources += (filePath -> source)
+      }
+    }
+
+    def getSource(filePath: String): Option[Source] = {
+      resources.synchronized {
+        resources.get(filePath)
+      }
+    }
+
+    def close(filePath: String): Unit = {
+      resources.synchronized {
+        resources.get(filePath).foreach { source =>
+          source.close()
+          resources -= filePath
+        }
+      }
+    }
+
+    def closeAll(): Unit = {
+      resources.synchronized {
+        resources.values.foreach(_.close())
+        resources.clear()
+        System.gc()
+        Thread.sleep(100)
+      }
+    }
+  }
+
 
   //内存中生成数据
   def createCacheBatch(arrowRoot: VectorSchemaRoot, batchLen: Int): ArrowRecordBatch = {
@@ -127,6 +165,7 @@ object DataUtils extends Logging{
       case "png"  => "Image File"
       case "pdf"  => "PDF Document"
       case "csv"  => "CSV File"
+      case "bin"  => "Binary File"
       case _      => "Unknown Type"
     }
   }
@@ -150,8 +189,18 @@ object DataUtils extends Logging{
 
   def getFileLines(filePath: String): Iterator[String] = {
     val source = Source.fromFile(filePath)
+    resourceManager.register(source, filePath)
     source.getLines()
   }
+
+  def closeFileSource(filePath: String): Unit = {
+    resourceManager.close(filePath)
+  }
+
+  def closeAllFileSources(): Unit = {
+    resourceManager.closeAll()
+  }
+
 
   def createFileChunkBatch( chunks: Iterator[(Int, String, Array[Byte])],arrowRoot: VectorSchemaRoot, batchSize: Int = 10
                           ): Iterator[ArrowRecordBatch] = {
@@ -175,28 +224,64 @@ object DataUtils extends Logging{
   }
 
   def readFileInChunks(file: File, chunkSize: Int = 5 * 1024 * 1024): Iterator[Array[Byte]] = {
-
     val inputStream = new FileInputStream(file)
+    var isClosed = false
 
     new Iterator[Array[Byte]] {
-      override def hasNext: Boolean = inputStream.available() > 0
+      override def hasNext: Boolean = {
+        if (isClosed) return false
+
+        try {
+          val available = inputStream.available() > 0
+          if (!available) {
+            closeStream()
+          }
+          available
+        } catch {
+          case e: IOException =>
+            logger.error(s"Error checking stream availability: ${e.getMessage}")
+            closeStream()
+            false
+        }
+      }
 
       override def next(): Array[Byte] = {
-        val bufferSize = Math.min(chunkSize, inputStream.available())
-        val buffer = new Array[Byte](bufferSize)
-        val bytesRead = inputStream.read(buffer)
-        if (bytesRead == -1) {
-          inputStream.close()
-          Iterator.empty.next()
-        } else if (bytesRead < buffer.length) {
-          inputStream.close()
-          buffer.take(bytesRead)
-        } else {
-          buffer
+        if (isClosed) throw new NoSuchElementException("Stream already closed")
+
+        try {
+          val bufferSize = Math.min(chunkSize, inputStream.available())
+          val buffer = new Array[Byte](bufferSize)
+          val bytesRead = inputStream.read(buffer)
+
+          if (bytesRead == -1) {
+            closeStream()
+            throw new NoSuchElementException("End of stream reached")
+          } else if (bytesRead < buffer.length) {
+            closeStream()
+            buffer.take(bytesRead)
+          } else {
+            buffer
+          }
+        } catch {
+          case e: IOException =>
+            closeStream()
+            throw new RuntimeException(s"Error reading from stream: ${e.getMessage}", e)
+        }
+      }
+
+      private def closeStream(): Unit = {
+        if (!isClosed) {
+          try {
+            inputStream.close()
+          } catch {
+            case e: IOException =>
+              logger.error(s"Error closing stream: ${e.getMessage}")
+          } finally {
+            isClosed = true
+          }
         }
       }
     }
-
   }
 
   //结构化文件分批传输
